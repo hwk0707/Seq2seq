@@ -74,7 +74,8 @@ def convert_tokens_to_word(data, vocab, max_len, if_go=False):
 
 
 def convert_ids_to_tokens(line, id2word):
-    word_data = [id2word[l] for l in line]
+    print(line)
+    word_data = [id2word[str(l)] for l in line]
     return word_data
 
 

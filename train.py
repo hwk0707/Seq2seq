@@ -74,7 +74,7 @@ def train(model, data_loader, optimizer, clip, epoch):
 
         optimizer.zero_grad()
 
-        prediction, loss = model(text_t, answer_t, question_t, 1)
+        prediction, loss = model(text_t, answer_t, question_t, 0.5)
 
         print_loss_total += loss.item()
         epoch_loss += loss.item()
@@ -107,7 +107,7 @@ if __name__ == "__main__":
 
             valid_loss = evaluate(model, validation_loader)
 
-            if valid_loss < best_loss or epoch % 5 == 0:
+            if valid_loss < best_loss:
                 early_stop = 0
                 best_loss = valid_loss
                 torch.save(model.module.state_dict(), './checkpoint/best_weight.bin')
