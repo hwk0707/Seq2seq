@@ -18,6 +18,7 @@ class ModelConfig:
         self.decoder_hid_dim = self.encoder_hid_dim * 2
         self.min_word_freq = 3
         self.clip = 1
+        self.beam_width = 10
 
 
 model_config = ModelConfig()

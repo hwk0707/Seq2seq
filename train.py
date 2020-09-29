@@ -97,7 +97,7 @@ if __name__ == "__main__":
     model = Seq2seq(model_config, len(word2id), word2id, id2word)
     model = torch.nn.DataParallel(model).cuda()
     model.module.load_state_dict(torch.load('./checkpoint/best_weight.bin'))
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=1e-5)
 
     early_stop = 0
     best_loss = 1000000

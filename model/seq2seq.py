@@ -1,13 +1,15 @@
 import torch
 import random
 from torch import nn
+import operator
+from queue import PriorityQueue
 from model.Encoder import Encoder
 from model.Decoder import Decoder
 from config import model_config
 
 
 class BeamSearchNode(object):
-    def __init__(self, hiddenstate, previousNode, wordId, logProb, length):
+    def __init__(self, hiddenstate, previousNode, word_id, prob, length):
         '''
         :param hiddenstate: hidden state
         :param previousNode: previous
@@ -17,15 +19,12 @@ class BeamSearchNode(object):
         '''
         self.h = hiddenstate
         self.prevNode = previousNode
-        self.wordid = wordId
-        self.logp = logProb
-        self.leng = length
+        self.word_id = word_id
+        self.p = prob
+        self.length = length
 
-    def eval(self, alpha=1.0):
-        reward = 0
-        # Add here a function for shaping a reward
-
-        return self.logp / float(self.leng - 1 + 1e-6) + alpha * reward
+    def eval(self):
+        return self.p
 
 
 class Seq2seq(nn.Module):
@@ -44,7 +43,10 @@ class Seq2seq(nn.Module):
                                config.decoder_hid_dim)
         self.embedding_dropout = nn.Dropout(model_config.dropout_rate)
 
-    def forward(self, text, answer, question, teacher_forcing_ratio=0.5):
+    def forward(self, text, answer, question, teacher_forcing_ratio=0.5, is_beam_search_decode=False):
+
+        if is_beam_search_decode:
+            return self.beam_decode(text, answer)
 
         pad_token = self.word2id['<pad>']
         bos_token = self.word2id['<start>']
@@ -69,8 +71,9 @@ class Seq2seq(nn.Module):
         hidden = answer_representation[-1, :, :].unsqueeze(0)
 
         for t in range(max_len):
-            output, hidden = self.decoder(input_embed, hidden, text_representation)
-            #output, hidden = self.decoder(input_embed, hidden, answer_representation)
+            # output, hidden = self.decoder(input_embed, hidden, text_representation)
+            # output, hidden = self.decoder(input_embed, hidden, answer_representation)
+            output, hidden = self.decoder(input_embed, hidden, answer_representation, text_representation)
             outputs[t] = output
             teacher_force = random.random() < teacher_forcing_ratio
             top = output.max(1)[1]
@@ -84,31 +87,40 @@ class Seq2seq(nn.Module):
         )
         return outputs, loss
 
-    def beam_decode(self, text, answer, encoder_outputs=None):
+    def beam_decode(self, text, answer):
 
         # text:
-        beam_width = 10
+        beam_width = model_config.beam_width
         topk = 1  # how many sentence do you want to generate
         decoded_batch = []
 
-        # decoding goes sentence by sentence
-        for idx in range(target_tensor.size(0)):
-            if isinstance(decoder_hiddens, tuple):  # LSTM case
-                decoder_hidden = (
-                decoder_hiddens[0][:, idx, :].unsqueeze(0), decoder_hiddens[1][:, idx, :].unsqueeze(0))
-            else:
-                decoder_hidden = decoder_hiddens[:, idx, :].unsqueeze(0)
-            encoder_output = encoder_outputs[:, idx, :].unsqueeze(1)
+        pad_token = self.word2id['<pad>']
+        bos_token = self.word2id['<start>']
+        eos_token = self.word2id['<end>']
 
-            # Start with the start of the sentence token
-            decoder_input = torch.LongTensor([[SOS_token]], device=device)
+        text_embed = self.embedding(text)
+        answer_embed = self.embedding(answer)
+
+        text_representations, _ = self.text_encoder(text_embed)
+        answer_representations, _ = self.answer_encoder(answer_embed)
+
+        batch_size = answer_representations.shape[1]
+
+        # decoding goes sentence by sentence
+        for idx in range(batch_size):
+
+            text_representation = text_representations[:, idx, :].unsqueeze(1)
+            answer_representation = answer_representations[:, idx, :].unsqueeze(1)
+
+            decoder_hidden = answer_representations[-1, :, :].unsqueeze(0)
+            decoder_hidden = decoder_hidden[:, idx, :].unsqueeze(1)  # [max_len, 1, hid_dim]
 
             # Number of sentence to generate
             endnodes = []
             number_required = min((topk + 1), topk - len(endnodes))
 
-            # starting node -  hidden vector, previous node, word id, logp, length
-            node = BeamSearchNode(decoder_hidden, None, decoder_input, 0, 1)
+            # starting node -  hidden vector, previous node, word id, p, length
+            node = BeamSearchNode(decoder_hidden, None, bos_token, 0, 1)
             nodes = PriorityQueue()
 
             # start the queue
@@ -118,14 +130,14 @@ class Seq2seq(nn.Module):
             # start beam search
             while True:
                 # give up when decoding takes too long
-                if qsize > 2000: break
-
+                if qsize > 2000:
+                    break
                 # fetch the best node
                 score, n = nodes.get()
-                decoder_input = n.wordid
+                decoder_input = self.embedding(torch.tensor([n.word_id] * 1, dtype=torch.long, device="cuda")).unsqueeze(0)
                 decoder_hidden = n.h
 
-                if n.wordid.item() == EOS_token and n.prevNode != None:
+                if n.word_id == eos_token and n.prevNode != None:
                     endnodes.append((score, n))
                     # if we reached maximum # of sentences required
                     if len(endnodes) >= number_required:
@@ -134,17 +146,18 @@ class Seq2seq(nn.Module):
                         continue
 
                 # decode for one step using decoder
-                decoder_output, decoder_hidden = decoder(decoder_input, decoder_hidden, encoder_output)
+                decoder_output, decoder_hidden = self.decoder(decoder_input, decoder_hidden, answer_representation,
+                                                              text_representation)
 
                 # PUT HERE REAL BEAM SEARCH OF TOP
-                log_prob, indexes = torch.topk(decoder_output, beam_width)
+                prob, indexes = torch.topk(decoder_output, beam_width)
                 nextnodes = []
 
                 for new_k in range(beam_width):
-                    decoded_t = indexes[0][new_k].view(1, -1)
-                    log_p = log_prob[0][new_k].item()
+                    decoded_t = indexes[0][new_k].tolist()
+                    p = prob[0][new_k].item()
 
-                    node = BeamSearchNode(decoder_hidden, n, decoded_t, n.logp + log_p, n.leng + 1)
+                    node = BeamSearchNode(decoder_hidden, n, decoded_t, n.p + p, n.length + 1)
                     score = -node.eval()
                     nextnodes.append((score, node))
 
@@ -162,18 +175,20 @@ class Seq2seq(nn.Module):
             utterances = []
             for score, n in sorted(endnodes, key=operator.itemgetter(0)):
                 utterance = []
-                utterance.append(n.wordid)
+                utterance.append(n.word_id)
                 # back trace
                 while n.prevNode != None:
                     n = n.prevNode
-                    utterance.append(n.wordid)
+                    utterance.append(n.word_id)
 
                 utterance = utterance[::-1]
                 utterances.append(utterance)
 
             decoded_batch.append(utterances)
 
-        return decoded_batch
+        return decoded_batch, 1
+
+
 if __name__ == "__main__":
     data = torch.randn(3, 4, 5)
     print(data[:, 0].size())
