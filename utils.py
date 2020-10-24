@@ -3,6 +3,10 @@ import re
 import itertools
 from collections import Counter
 from config import project_root_path
+import gensim
+import torch
+import re
+from config import model_config
 
 
 def preprocess(text):
@@ -10,17 +14,63 @@ def preprocess(text):
     return text
 
 
+def init_embedding_using_w2v(word2idx, idx2word, path, embed_size):
+    w2v = gensim.models.KeyedVectors.load_word2vec_format(path, binary=False)
+    weight = torch.zeros(len(word2idx), embed_size)
+
+    for i in range(len(idx2word)):
+        word = idx2word[i]
+        index = word2idx[word]
+        try:
+            weight[index, :] = torch.from_numpy(w2v.get_vector(word))
+        except:
+            weight[index, :] = torch.rand(1, embed_size)
+            print("{} not in the w2v vocab!".format(word))
+    return weight
+
+
 def load_data(path):
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    text_list, question_list, answer_list = [], [], []
+    text_list, text_tag_list, question_list, answer_list = [], [], [], []
     for d in data:
         text = d['text']
+        # print("text", text)
         for q_a in d['annotations']:
             text_list.append(text)
+            q_a['A'] = q_a['A'].strip().strip(" ")
             question_list.append(q_a['Q'])
             answer_list.append(q_a['A'])
-    return text_list, question_list, answer_list
+
+            ans_split_list = re.findall("[^，。？]+[，。？]?", q_a['A'])
+            position_embed = ["O"] * len(text)
+            for idx, ans in enumerate(ans_split_list):
+                ans_start = -1
+                if ans in text:
+                    ans_start = text.index(ans)
+                elif ans[0:-4] in text:
+                    ans_start = text.index(ans[0:-4])
+                elif len(ans) > 4 and ans[4:] in text:
+                    ans_start = text.index(ans[4:])
+
+                if ans_start != -1:
+                    ans_end = ans_start + len(ans)
+                    position_embed[ans_start:ans_end] = ["I"] * (ans_end - ans_start)
+                if idx == len(ans_split_list) - 1:
+                    start = position_embed.index("I")
+                    position_embed[start] = "B"
+            # try:
+            #     print(q_a['A'], ''.join(position_embed).index("B"), text.index(q_a['A']),list(''.join(position_embed)).count("B"), list(''.join(position_embed)).count("I"),len(q_a['A'],))
+            # except:
+            #     try:
+            #         print("======", q_a['A'], ''.join(position_embed).index("B"), "=====")
+            #     except Exception as e:
+            #         print("======", q_a['A'], ''.join(position_embed).index('I'), "=====!!!!!!")
+            #         raise e
+
+            text_tag_list.append(''.join(position_embed))
+
+    return text_list, question_list, answer_list,  text_tag_list
 
 
 def build_vocab(words_list, is_save_vocab=False, min_freq=3):
@@ -73,8 +123,20 @@ def convert_tokens_to_word(data, vocab, max_len, if_go=False):
     return processed_data, length_data
 
 
-def convert_ids_to_tokens(line, id2word):
-    print(line)
+def convert_tags_to_id(data, max_len):
+    processed_data = []
+    length_data = []
+    for line in data:
+        encode = []
+        for word in line:
+            encode.append(model_config.tag2idx[word])
+        encode = encode + [model_config.tag2idx['PAD']] * (max_len - len(encode))
+        processed_data.append(encode[:max_len])
+    return processed_data, length_data
+
+
+def convert_ids_to_tokens(line):
+    word2id, id2word = load_vocab()
     word_data = [id2word[str(l)] for l in line]
     return word_data
 

@@ -41,13 +41,17 @@ class Decoder(nn.Module):
 
         dec_out, hidden = self.rnn(input_embed, hidden)
 
-        att_enc_outs = self.ans_text_attention(ans_enc_outs, text_enc_outs)
+        #att_enc_outs = self.ans_text_attention(ans_enc_outs, text_enc_outs)
 
         # att_w: [batch_size, 1, max_len]
-        att_w = self.attention(att_enc_outs, hidden).unsqueeze(1)
+        #att_w = self.attention(att_enc_outs, hidden).unsqueeze(1)
+        att_w = self.attention(text_enc_outs, hidden).unsqueeze(1)
+        # att_w = self.attention(ans_enc_outs, hidden).unsqueeze(1)
 
         # weighted_context: [batch_size, 1, dec_hid_dim]
-        weighted_context = torch.bmm(att_w, att_enc_outs.transpose(0, 1))
+        #weighted_context = torch.bmm(att_w, att_enc_outs.transpose(0, 1))
+        weighted_context = torch.bmm(att_w, text_enc_outs.transpose(0, 1))
+        # weighted_context = torch.bmm(att_w, ans_enc_outs.transpose(0, 1))
 
         # [batch_size, dec_hid_dim * 2
         concat_context = torch.cat((weighted_context, dec_out.transpose(0, 1)), dim=2).squeeze(1)

@@ -6,6 +6,7 @@ from queue import PriorityQueue
 from model.Encoder import Encoder
 from model.Decoder import Decoder
 from config import model_config
+from utils import init_embedding_using_w2v
 
 
 class BeamSearchNode(object):
@@ -28,34 +29,44 @@ class BeamSearchNode(object):
 
 
 class Seq2seq(nn.Module):
-    def __init__(self, config, vocab_size, word2id, id2word):
+    def __init__(self, config, vocab_size, word2id, id2word, is_load_model=False):
         super().__init__()
 
         self.word2id = word2id
         self.id2word = id2word
         self.vocab_size = vocab_size
-        self.embedding = nn.Embedding(vocab_size, config.embedding_dim)
 
-        self.text_encoder = Encoder(config.embedding_dim, config.encoder_hid_dim)
+        self.position_tag_embedding = nn.Embedding(len(config.tag2idx), config.position_embded_size)
+        if is_load_model:
+            self.embedding = nn.Embedding(vocab_size, config.embedding_dim)
+        else:
+            init_weight = init_embedding_using_w2v(word2id, id2word, config.w2v_path, config.embedding_dim)
+            self.embedding = nn.Embedding.from_pretrained(init_weight)
+            self.embedding.weight.requires_grad = True
+
+        self.text_encoder = Encoder(config.embedding_dim + config.position_embded_size, config.encoder_hid_dim)
         self.answer_encoder = Encoder(config.embedding_dim, config.encoder_hid_dim)
 
         self.decoder = Decoder(vocab_size, config.embedding_dim, config.encoder_hid_dim,
                                config.decoder_hid_dim)
         self.embedding_dropout = nn.Dropout(model_config.dropout_rate)
 
-    def forward(self, text, answer, question, teacher_forcing_ratio=0.5, is_beam_search_decode=False):
+    def forward(self, text, answer, question, tag, teacher_forcing_ratio=0.5, is_beam_search_decode=False):
 
         if is_beam_search_decode:
-            return self.beam_decode(text, answer)
+            return self.beam_decode(text, answer, tag)
 
         pad_token = self.word2id['<pad>']
         bos_token = self.word2id['<start>']
 
-        text_embed = self.embedding(text)
         answer_embed = self.embedding(answer)
         question_embed = self.embedding(question)
 
-        text_representation, _ = self.text_encoder(text_embed)
+        text_embed = self.embedding(text)
+        tag_embed = self.position_tag_embedding(tag)
+        text_with_position_embed = torch.cat((text_embed, tag_embed), dim=2)
+
+        text_representation, _ = self.text_encoder(text_with_position_embed)
         answer_representation, _ = self.answer_encoder(answer_embed)
 
         # answer_representation: [max sen length, batch size, encoder dim]
@@ -68,7 +79,8 @@ class Seq2seq(nn.Module):
         # first step
         first_input = torch.tensor([bos_token] * batch_size, dtype=torch.long, device="cuda")
         input_embed = self.embedding(first_input).unsqueeze(0)
-        hidden = answer_representation[-1, :, :].unsqueeze(0)
+        # hidden = answer_representation[-1, :, :].unsqueeze(0)
+        hidden = answer_representation[-1, :, :].unsqueeze(0)[-1, :, :].unsqueeze(0)
 
         for t in range(max_len):
             # output, hidden = self.decoder(input_embed, hidden, text_representation)
@@ -87,7 +99,7 @@ class Seq2seq(nn.Module):
         )
         return outputs, loss
 
-    def beam_decode(self, text, answer):
+    def beam_decode(self, text, answer, tag):
 
         # text:
         beam_width = model_config.beam_width
@@ -99,9 +111,12 @@ class Seq2seq(nn.Module):
         eos_token = self.word2id['<end>']
 
         text_embed = self.embedding(text)
+        tag_embed = self.position_tag_embedding(tag)
+        text_with_position_embed = torch.cat((text_embed, tag_embed), dim=2)
+
         answer_embed = self.embedding(answer)
 
-        text_representations, _ = self.text_encoder(text_embed)
+        text_representations, _ = self.text_encoder(text_with_position_embed)
         answer_representations, _ = self.answer_encoder(answer_embed)
 
         batch_size = answer_representations.shape[1]
@@ -112,7 +127,7 @@ class Seq2seq(nn.Module):
             text_representation = text_representations[:, idx, :].unsqueeze(1)
             answer_representation = answer_representations[:, idx, :].unsqueeze(1)
 
-            decoder_hidden = answer_representations[-1, :, :].unsqueeze(0)
+            decoder_hidden = text_representations[-1, :, :].unsqueeze(0)
             decoder_hidden = decoder_hidden[:, idx, :].unsqueeze(1)  # [max_len, 1, hid_dim]
 
             # Number of sentence to generate

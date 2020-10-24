@@ -19,6 +19,9 @@ class ModelConfig:
         self.min_word_freq = 3
         self.clip = 1
         self.beam_width = 10
+        self.w2v_path = project_root_path + "/data/token_vec_300.bin"
+        self.position_embded_size = 20  # embed as BIO
+        self.tag2idx = {"B": 0, "I": 1, "O": 2, "PAD": 3}
 
 
 model_config = ModelConfig()
