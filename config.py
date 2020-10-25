@@ -7,7 +7,7 @@ class DataConfig:
         self.max_text_len = 500
         self.max_question_len = 28
         self.max_answer_len = 150
-        self.batch_size = 32
+        self.batch_size = 24
 
 
 class ModelConfig:
@@ -22,6 +22,7 @@ class ModelConfig:
         self.w2v_path = project_root_path + "/data/token_vec_300.bin"
         self.position_embded_size = 20  # embed as BIO
         self.tag2idx = {"B": 0, "I": 1, "O": 2, "PAD": 3}
+        self.pointer_gen = True
 
 
 model_config = ModelConfig()

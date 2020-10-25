@@ -51,7 +51,7 @@ class Seq2seq(nn.Module):
                                config.decoder_hid_dim)
         self.embedding_dropout = nn.Dropout(model_config.dropout_rate)
 
-    def forward(self, text, answer, question, tag, teacher_forcing_ratio=0.5, is_beam_search_decode=False):
+    def forward(self, text, answer, question, tag, oov_list, teacher_forcing_ratio=0.5, is_beam_search_decode=False):
 
         if is_beam_search_decode:
             return self.beam_decode(text, answer, tag)
@@ -85,7 +85,7 @@ class Seq2seq(nn.Module):
         for t in range(max_len):
             # output, hidden = self.decoder(input_embed, hidden, text_representation)
             # output, hidden = self.decoder(input_embed, hidden, answer_representation)
-            output, hidden = self.decoder(input_embed, hidden, answer_representation, text_representation)
+            output, hidden = self.decoder(text, input_embed, hidden, answer_representation, text_representation)
             outputs[t] = output
             teacher_force = random.random() < teacher_forcing_ratio
             top = output.max(1)[1]

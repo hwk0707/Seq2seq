@@ -29,15 +29,40 @@ def init_embedding_using_w2v(word2idx, idx2word, path, embed_size):
     return weight
 
 
-def load_data(path):
+def convert_tokens_to_word(data, vocab, max_len, if_go=False):
+    processed_data = []
+    length_data = []
+    for line in data:
+        encode = []
+        if if_go:
+            encode.append(vocab['<start>'])
+        for word in line:
+            encode.append(vocab[word] if word in vocab else vocab['<unk>'])
+        if if_go:
+            encode.append(vocab['<end>'])
+        length_data.append(len(encode))
+        encode = encode + [vocab['<pad>']] * (max_len - len(encode))
+        processed_data.append(encode[:max_len])
+    return processed_data, length_data
+
+
+def load_data(path, word2id={}):
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    text_list, text_tag_list, question_list, answer_list = [], [], [], []
+
+    # oov list for point copy net
+    text_list, text_tag_list, question_list, answer_list, oov_list = [], [], [], [], []
     for d in data:
         text = d['text']
         # print("text", text)
         for q_a in d['annotations']:
             text_list.append(text)
+
+            if not word2id:
+                oov_list.append([str(word) for word in text if str(word) not in word2id])
+            else:
+                oov_list.append([0])
+
             q_a['A'] = q_a['A'].strip().strip(" ")
             question_list.append(q_a['Q'])
             answer_list.append(q_a['A'])
@@ -70,7 +95,7 @@ def load_data(path):
 
             text_tag_list.append(''.join(position_embed))
 
-    return text_list, question_list, answer_list,  text_tag_list
+    return text_list, question_list, answer_list,  text_tag_list, oov_list
 
 
 def build_vocab(words_list, is_save_vocab=False, min_freq=3):
@@ -106,7 +131,7 @@ def load_vocab():
     return word2idx, id2word
 
 
-def convert_tokens_to_word(data, vocab, max_len, if_go=False):
+def convert_tokens_to_word(data, vocab, max_len, if_go=False, oov=""):
     processed_data = []
     length_data = []
     for line in data:
@@ -114,7 +139,10 @@ def convert_tokens_to_word(data, vocab, max_len, if_go=False):
         if if_go:
             encode.append(vocab['<start>'])
         for word in line:
-            encode.append(vocab[word] if word in vocab else vocab['<unk>'])
+            if word in oov:
+                encode.append(int(oov.index(word)) + len(vocab))
+            else:
+                encode.append(vocab[word] if word in vocab else vocab['<unk>'])
         if if_go:
             encode.append(vocab['<end>'])
         length_data.append(len(encode))
@@ -135,9 +163,18 @@ def convert_tags_to_id(data, max_len):
     return processed_data, length_data
 
 
-def convert_ids_to_tokens(line):
+def convert_ids_to_tokens(line, oov=""):
     word2id, id2word = load_vocab()
-    word_data = [id2word[str(l)] for l in line]
+    if not oov:
+        word_data = []
+        for l in line:
+            if str(l) in id2word:
+                word_data.append(id2word[str(l)])
+            else:
+                word_position = max(int(l) - len(word2id), 0)
+                word_data.append(oov[word_position])
+    else:
+        word_data = [id2word[str(l)] for l in line]
     return word_data
 
 

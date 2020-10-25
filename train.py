@@ -6,16 +6,25 @@ from config import *
 from model.seq2seq import Seq2seq
 from rouge_score import rouge_scorer
 import time
+from config import model_config
 
 
-texts, questions, answers, text_tag_list = load_data(project_root_path + "/data/round1_train_0907.json")
-test_texts, _, test_answers, test_text_tag_list = load_data(project_root_path + '/data/round1_test_0907.json')
+texts, questions, answers, text_tag_list, train_oov_list = load_data(project_root_path + "/data/round1_train_0907.json")
+test_texts, _, test_answers, test_text_tag_list, test_oov_list = load_data(project_root_path + '/data/round1_test_0907.json')
+words = texts + questions + answers + test_texts + test_answers
+word2id, id2word = build_vocab(words, is_save_vocab=True, min_freq=3)
+
+
+texts, questions, answers, text_tag_list, train_oov_list = load_data(project_root_path + "/data/round1_train_0907.json", word2id)
+test_texts, _, test_answers, test_text_tag_list, test_oov_list = load_data(project_root_path + '/data/round1_test_0907.json', word2id)
 words = texts + questions + answers + test_texts + test_answers
 
-word2id, id2word = build_vocab(words, is_save_vocab=True, min_freq=3)
+
 texts_id, _ = convert_tokens_to_word(texts, word2id, data_config.max_text_len)
 questions_id, _ = convert_tokens_to_word(questions, word2id, data_config.max_question_len)
 answers_id, _ = convert_tokens_to_word(answers, word2id, data_config.max_answer_len)
+
+# from position embed
 text_tag_id, _ = convert_tags_to_id(text_tag_list, data_config.max_text_len)
 print(len(texts_id), len(texts_id[0]))
 
@@ -24,7 +33,9 @@ answers_id = torch.tensor(answers_id, dtype=torch.long)
 questions_id = torch.tensor(questions_id, dtype=torch.long)
 text_tag_id = torch.tensor(text_tag_id, dtype=torch.long)
 
-dataset = torch.utils.data.TensorDataset(texts_id, answers_id, questions_id, text_tag_id)
+oov_list = torch.tensor(train_oov_list)
+
+dataset = torch.utils.data.TensorDataset(texts_id, answers_id, questions_id, text_tag_id, oov_list)
 
 # Creating data indices for training and validation splits:
 dataset_size = len(dataset)
@@ -57,9 +68,9 @@ def evaluate(model, data_loader):
     with torch.no_grad():
         for i, batch in enumerate(data_loader):
             batch = tuple(t.cuda() for t in batch)
-            text, answer, question, tags = batch
+            text, answer, question, tags, oov_list = batch
 
-            prediction, loss = model(text.t(), answer.t(), question.t(), tags.t(), 0) # turn off teacher forcing
+            prediction, loss = model(text.t(), answer.t(), question.t(), tags.t(), oov_list, 0) # turn off teacher forcing
 
             prediction = prediction.transpose(0, 1)
             prediction = prediction.max(2)[1]
@@ -96,12 +107,12 @@ def train(model, data_loader, optimizer, clip, epoch):
 
     for i, batch in enumerate(data_loader):
         batch = tuple(t.cuda() for t in batch)
-        text, answer, question, text_tag = batch
+        text, answer, question, text_tag, oov_list = batch
         text_t, answer_t, question_t, text_tag_t = text.t(), answer.t(), question.t(), text_tag.t()
 
         optimizer.zero_grad()
 
-        prediction, loss = model(text_t, answer_t, question_t, text_tag_t, 0.5)
+        prediction, loss = model(text_t, answer_t, question_t, text_tag_t, oov_list, 0.5)
 
         print_loss_total += loss.item()
         epoch_loss += loss.item()
@@ -121,15 +132,15 @@ def train(model, data_loader, optimizer, clip, epoch):
 
 if __name__ == "__main__":
 
-    model = Seq2seq(model_config, len(word2id), word2id, id2word, True)
+    model = Seq2seq(model_config, len(word2id), word2id, id2word)
     model = torch.nn.DataParallel(model).cuda()
-    model.module.load_state_dict(torch.load('./checkpoint/best_weight.bin'))
-    optimizer = optim.Adam(model.parameters(), lr=1e-5)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.8)
+    # model.module.load_state_dict(torch.load('./checkpoint/best_weight.bin'))
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.8)
 
     early_stop = 0
     best_loss = 1000000
-    best_score = 0.434
+    best_score = -10000
     for epoch in range(10000000):
 
             train_loss = train(model, train_loader, optimizer, model_config.clip, epoch)

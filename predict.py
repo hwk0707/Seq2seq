@@ -6,9 +6,10 @@ from utils import *
 from config import *
 from model.seq2seq import Seq2seq
 
-test_texts, _, test_answers, text_tag_list = load_data(project_root_path + '/data/juesai_1011.json')
 
 word2id, id2word = load_vocab()
+
+test_texts, _, test_answers, text_tag_list, oov_list = load_data(project_root_path + '/data/juesai_1011.json', word2id)
 
 test_texts_id, _ = convert_tokens_to_word(test_texts, word2id, data_config.max_text_len)
 test_answers_id, _ = convert_tokens_to_word(test_answers, word2id, data_config.max_answer_len)

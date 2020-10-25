@@ -28,7 +28,7 @@ class Attention(nn.Module):
              attn_energies = self.concat(dec_out, enc_outs)
 
         attn_energies = attn_energies.t()
-        return F.softmax(attn_energies, dim=1)
+        return F.softmax(attn_energies, dim=1), attn_energies
 
     def dot(self, dec_out, enc_outs):
         return torch.sum(dec_out * enc_outs, dim=2)
